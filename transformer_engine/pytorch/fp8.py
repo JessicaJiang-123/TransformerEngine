@@ -77,10 +77,24 @@ def check_nvfp4_support() -> Tuple[bool, str]:
     return False, "Device compute capability 10.0 or higher required for NVFP4 execution."
 
 
+def use_fp8_block_scaling_triton() -> bool:
+    """Return True if the ROCm Triton blockwise-FP8 backend is enabled.
+
+    Opt-in via NVTE_USE_FP8_BLOCK_SCALING_TRITON; ROCm-only (folds IS_HIP_EXTENSION
+    so CUDA and the default path are never affected).
+    """
+    return IS_HIP_EXTENSION and os.getenv("NVTE_USE_FP8_BLOCK_SCALING_TRITON", "0") != "0"
+
+
 def check_fp8_block_scaling_support() -> Tuple[bool, str]:
     """Return if fp8 block scaling support is available"""
     if IS_HIP_EXTENSION:
-        return False, "FP8 block scaled gemm not yet supported for ROCm"
+        if os.getenv("NVTE_USE_FP8_BLOCK_SCALING_TRITON", "0") == "0":
+            return False, "FP8 block scaling on ROCm requires NVTE_USE_FP8_BLOCK_SCALING_TRITON=1."
+        gpu_arch = get_device_compute_capability()
+        if gpu_arch == (9, 5):
+            return True, ""
+        return False, "FP8 block scaling on ROCm requires gfx95x (gfx950)."
     if (
         get_device_compute_capability() >= (9, 0)
         and get_device_compute_capability() < (10, 0)
