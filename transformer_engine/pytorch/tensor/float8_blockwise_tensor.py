@@ -96,7 +96,12 @@ class Float8BlockQuantizer(Quantizer):
             src = src.contiguous()
 
         # Launch cast kernel
-        tex.quantize(src, self, dst, noop_flag)
+        from ..fp8 import use_fp8_block_scaling_triton
+        if use_fp8_block_scaling_triton():
+            from ..triton_kernels.blockwise_fp8_integration import quantize_into
+            quantize_into(self, src, dst)
+        else:
+            tex.quantize(src, self, dst, noop_flag)
 
         dst._fp8_dtype = self.dtype
         return dst
