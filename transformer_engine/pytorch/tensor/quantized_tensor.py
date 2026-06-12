@@ -284,6 +284,13 @@ class _QuantizeFunc(torch.autograd.Function):
     ) -> QuantizedTensor:
         # pylint: disable=missing-function-docstring
         if IS_HIP_EXTENSION:
+            # DeepSeek-style blockwise FP8 has no ROCm C++ cast: route to the Triton path.
+            from .float8_blockwise_tensor import Float8BlockQuantizer
+            if isinstance(quantizer, Float8BlockQuantizer):
+                out = quantizer.make_empty(
+                    tensor.shape, dtype=tensor.dtype, device=tensor.device
+                )
+                return quantizer.update_quantized(tensor, out)
             from ..triton_kernels.cast import te_quantize_triton
             use_cast_transpose_triton =  bool( int(os.environ.get('NVTE_USE_CAST_TRANSPOSE_TRITON', '0')) )
             quantize_func = te_quantize_triton if use_cast_transpose_triton else tex.quantize
