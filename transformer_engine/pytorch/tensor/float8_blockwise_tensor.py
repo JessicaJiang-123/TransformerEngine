@@ -7,8 +7,10 @@ from __future__ import annotations
 from typing import Optional, Tuple, Iterable, Union
 
 import math
+import os
 import torch
 import transformer_engine_torch as tex
+from torch.utils.cpp_extension import IS_HIP_EXTENSION
 from transformer_engine_torch import DType as TE_DType
 from transformer_engine_torch import Float8BlockScaleTensorFormat
 
@@ -96,8 +98,7 @@ class Float8BlockQuantizer(Quantizer):
             src = src.contiguous()
 
         # Launch cast kernel
-        from ..fp8 import use_fp8_block_scaling_triton
-        if use_fp8_block_scaling_triton():
+        if IS_HIP_EXTENSION and os.getenv("NVTE_ROCM_ENABLE_FP8_BLOCK_SCALING", "0") != "0":
             from ..triton_kernels.blockwise_fp8_integration import quantize_into
             quantize_into(self, src, dst)
         else:
