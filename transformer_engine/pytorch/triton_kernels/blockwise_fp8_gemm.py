@@ -473,3 +473,26 @@ def gemm_fp8_blockwise_triton_kernel(
         TRANS_C_STORE=TRANS_C_STORE,
     )
     return out
+
+
+def gemm_blockwise(A, B, transa, transb, out_dtype, bias=None, out=None):
+    """Blockwise FP8 GEMM for Float8Blockwise operands via the Triton kernel.
+
+    ``general_gemm`` computes ``out = op_b(B) @ op_a(A)``; the Triton kernel
+    computes ``op(a) @ op(b)``, so a=B, b=A with the transpose flags swapped.
+    """
+    from .common import te_dtype_to_torch_dtype
+
+    dt = te_dtype_to_torch_dtype(A._fp8_dtype)
+    a_data, a_scale = B.get_gemm_operand(is_left=True, trans=transb)
+    b_data, b_scale = A.get_gemm_operand(is_left=False, trans=transa)
+    res = gemm_fp8_blockwise_triton_kernel(
+        a_data.view(dt), a_scale, b_data.view(dt), b_scale,
+        trans_a=transb, trans_b=transa, out_dtype=out_dtype,
+    )
+    if bias is not None:
+        res = res + bias.to(res.dtype)
+    if out is not None:
+        out.copy_(res)
+        return out
+    return res

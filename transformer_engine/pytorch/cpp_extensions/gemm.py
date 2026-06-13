@@ -8,6 +8,7 @@ from typing import Iterable, Optional, Tuple, Union, List
 import os
 import torch
 import transformer_engine_torch as tex
+from torch.utils.cpp_extension import IS_HIP_EXTENSION
 from ..constants import TE_DType
 from ..utils import get_sm_count, _empty_tensor
 
@@ -108,6 +109,10 @@ def general_gemm(
     bias_dtype = TE_DType[torch.bfloat16 if bias is None else bias.dtype]
 
     if isinstance(A, Float8BlockwiseQTensorBase) or isinstance(B, Float8BlockwiseQTensorBase):
+        if IS_HIP_EXTENSION:
+            from ..triton_kernels.blockwise_fp8_gemm import gemm_blockwise
+            out = gemm_blockwise(A, B, transa, transb, out_dtype, bias=bias, out=out)
+            return out, None, None, None
         # There is not use_split_accumulator == False
         # implementation for Float8BlockwiseQTensorBase GEMM
         use_split_accumulator = True
