@@ -20,6 +20,7 @@ from .base import (
     _2X_ACC_WGRAD,
 )
 from ._common import WeightGradStore
+from torch.utils.cpp_extension import IS_HIP_EXTENSION
 from ..fp8 import FP8GlobalStateManager
 from ..utils import (
     divide,
@@ -783,6 +784,15 @@ class GroupedLinear(TransformerEngineBaseModule):
             else:
                 linear_fn = _GroupedLinear.forward
                 args = [None]
+            if IS_HIP_EXTENSION and self.fp8:
+                _recipe = FP8GlobalStateManager.get_fp8_recipe()
+                if _recipe is not None and _recipe.float8_block_scaling():
+                    from .grouped_linear_blockwise import _GroupedLinearBlockwiseFP8
+                    linear_fn = (
+                        _GroupedLinearBlockwiseFP8.apply
+                        if torch.is_grad_enabled()
+                        else _GroupedLinearBlockwiseFP8.forward
+                    )
             args += (
                 inp,
                 m_splits,
