@@ -106,6 +106,11 @@ class Float8BlockQuantizer(Quantizer):
         dst._fp8_dtype = self.dtype
         return dst
 
+    def _quantize_impl(self, tensor: torch.Tensor) -> QuantizedTensor:
+        """Quantize tensor out-of-place (ROCm Triton path)"""
+        out = self.make_empty(tensor.shape, dtype=tensor.dtype, device=tensor.device)
+        return self.update_quantized(tensor, out)
+
     def get_scale_shape(self, shape: Iterable[int], columnwise: bool) -> Tuple[int, int]:
         """Calculate the shape of the scaling tensor for blockwise quantization.
 

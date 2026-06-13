@@ -206,6 +206,14 @@ class Quantizer(abc.ABC):
             return _QuantizeFunc.apply(tensor, self)
         return _QuantizeFunc.forward(None, tensor, self)
 
+    def _quantize_impl(self, tensor: torch.Tensor) -> QuantizedTensor:
+        """Quantize tensor out-of-place"""
+        from ..triton_kernels.cast import te_quantize_triton
+
+        use_cast_transpose_triton = bool(int(os.environ.get("NVTE_USE_CAST_TRANSPOSE_TRITON", "0")))
+        quantize_func = te_quantize_triton if use_cast_transpose_triton else tex.quantize
+        return quantize_func(tensor, self)
+
     def multi_quantize(self, list_of_tensors):
         """Quantize multiple tensors"""
         list_of_output_tensors = []
@@ -284,19 +292,8 @@ class _QuantizeFunc(torch.autograd.Function):
     ) -> QuantizedTensor:
         # pylint: disable=missing-function-docstring
         if IS_HIP_EXTENSION:
-            # DeepSeek-style blockwise FP8 has no ROCm C++ cast: route to the Triton path.
-            from .float8_blockwise_tensor import Float8BlockQuantizer
-            if isinstance(quantizer, Float8BlockQuantizer):
-                out = quantizer.make_empty(
-                    tensor.shape, dtype=tensor.dtype, device=tensor.device
-                )
-                return quantizer.update_quantized(tensor, out)
-            from ..triton_kernels.cast import te_quantize_triton
-            use_cast_transpose_triton =  bool( int(os.environ.get('NVTE_USE_CAST_TRANSPOSE_TRITON', '0')) )
-            quantize_func = te_quantize_triton if use_cast_transpose_triton else tex.quantize
-            return quantize_func(tensor, quantizer)
-        else:
-            return tex.quantize(tensor, quantizer)
+            return quantizer._quantize_impl(tensor)
+        return tex.quantize(tensor, quantizer)
 
     @staticmethod
     def backward(
