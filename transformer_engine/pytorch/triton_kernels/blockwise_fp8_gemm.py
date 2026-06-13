@@ -2,11 +2,9 @@
 #
 # See LICENSE for license information.
 #
-# DeepSeek-style blockwise FP8 GEMM (1x128 act / 128x128 weight) — unified
-# NT(fwd) / NN(dgrad) / TN(wgrad) Triton kernel. Ported from AMD Primus-Turbo
-# (primus_turbo/triton/gemm/gemm_fp8_kernel.py, blockwise section); pure-Triton,
-# no CK / no C++. Only the blockwise path is taken (origami / split-K helpers,
-# used by the tensorwise/rowwise paths, are intentionally not ported).
+# Blockwise FP8 GEMM Triton kernel: a unified NT/NN/TN kernel covering the
+# forward, dgrad and wgrad layouts. Adapted from AMD Primus-Turbo
+# (primus_turbo/triton/gemm/gemm_fp8_kernel.py, blockwise section).
 
 import itertools
 import os
@@ -16,16 +14,13 @@ import triton
 import triton.language as tl
 
 
-# --- arch detection ---------------------------------------------------------
-# Self-contained for standalone testing. TODO(integration): replace with TE's
-# ``from ..common import get_arch`` -> ``get_arch() == "gfx950"`` once this
-# module is imported through the transformer_engine.pytorch package.
+# Local gfx950 check (TODO: use TE's common.get_arch).
 def is_gfx950() -> bool:
     props = torch.cuda.get_device_properties(torch.cuda.current_device())
     return "gfx950" in props.gcnArchName
 
 
-# --- AMD compiler knobs (ported from Primus triton_knobs_helper.py) ----------
+# AMD gfx950 compiler knobs (from Primus triton_knobs_helper.py).
 _KNOBS_SET = False
 
 
@@ -45,12 +40,8 @@ def set_triton_knobs_gfx950() -> None:
         os.environ.setdefault("TRITON_HIP_USE_BLOCK_PINGPONG", "1")
 
 
-# ===========================================================================
-# Below: blockwise FP8 GEMM, copied verbatim from Primus-Turbo
-# gemm_fp8_kernel.py lines 742-1172 (_get_blockwise_autotune_configs,
-# _blockwise_fp8_unified_kernel, the three autotune wrappers, and the public
-# gemm_fp8_blockwise_triton_kernel entrypoint).
-# ===========================================================================
+# Blockwise FP8 GEMM kernel, autotune configs and public entrypoint
+# (from Primus gemm_fp8_kernel.py).
 def _get_blockwise_autotune_configs(
     allow_num_stages_3: bool = True,
     extra_matrix_instr_nonkdim: list | None = None,
