@@ -73,7 +73,10 @@ class _GroupedLinearBlockwiseFP8(torch.autograd.Function):
         assert fp8, "blockwise grouped FP8 path requires fp8=True"
         assert not use_bias, "bias is not supported in the blockwise grouped FP8 path yet"
         assert not fuse_wgrad_accumulation, (
-            "fuse_wgrad_accumulation is not supported in the blockwise grouped FP8 path yet"
+            "fuse_wgrad_accumulation (gradient_accumulation_fusion) is not yet supported in "
+            "the ROCm blockwise grouped FP8 path. Pass --no-gradient-accumulation-fusion to the "
+            "training script: wgrad is then returned as a plain gradient and Megatron's DDP "
+            "post-hook accumulates it into the fp32 main_grad (numerically equivalent for bring-up)."
         )
         assert not cpu_offloading, "cpu_offloading is not supported in the blockwise grouped FP8 path yet"
         assert not save_original_input, (
