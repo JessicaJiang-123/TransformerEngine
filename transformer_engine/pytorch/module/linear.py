@@ -67,6 +67,7 @@ from ..tensor.quantized_tensor import (
     restore_from_saved,
 )
 from ..tensor.float8_tensor import Float8CurrentScalingQuantizer, Float8Quantizer
+from ..tensor.float8_blockwise_tensor import Float8BlockQuantizer
 from ..tensor.mxfp8_tensor import MXFP8Quantizer
 from ..tensor.utils import is_experimental
 from ..export import is_in_onnx_export_mode, assert_warmed_up
@@ -1478,6 +1479,18 @@ class Linear(TransformerEngineBaseModule):
             else:
                 linear_fn = _Linear.forward
                 args = [None]
+
+            # ROCm blockwise Triton GEMM is 2D-only; flatten leading dims (Primus
+            # LinearFP8 style) so quantize + fwd/dgrad/wgrad run in 2D, restored below.
+            rocm_blockwise_flatten = (
+                IS_HIP_EXTENSION
+                and isinstance(input_quantizer, Float8BlockQuantizer)
+                and inp.dim() > 2
+            )
+            if rocm_blockwise_flatten:
+                inp_lead = inp.shape[:-1]
+                inp = inp.reshape(-1, inp.shape[-1])
+
             args += (
                 weight_tensor,
                 inp,
@@ -1519,6 +1532,8 @@ class Linear(TransformerEngineBaseModule):
                 self.use_fsdp2
             )
             out = linear_fn(*args)
+            if rocm_blockwise_flatten:
+                out = out.reshape(*inp_lead, out.shape[-1])
         if self.gemm_bias_unfused_add:
             out = out + cast_if_needed(bias_tensor, self.activation_dtype)
 
