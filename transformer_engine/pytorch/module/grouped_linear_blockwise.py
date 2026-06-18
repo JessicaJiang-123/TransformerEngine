@@ -70,21 +70,24 @@ class _GroupedLinearBlockwiseFP8(torch.autograd.Function):
         biases = weights_and_biases[num_gemms:]
 
         # First-cut: unsupported orchestration features -> loud error, not silent wrong.
+        # Internal invariant (dispatch guarantees fp8=True here) -> assert is fine.
         assert fp8, "blockwise grouped FP8 path requires fp8=True"
-        assert not use_bias, "bias is not supported in the blockwise grouped FP8 path yet"
-        assert not fuse_wgrad_accumulation, (
-            "fuse_wgrad_accumulation (gradient_accumulation_fusion) is not yet supported in "
-            "the ROCm blockwise grouped FP8 path. Pass --no-gradient-accumulation-fusion to the "
-            "training script: wgrad is then returned as a plain gradient and Megatron's DDP "
-            "post-hook accumulates it into the fp32 main_grad (numerically equivalent for bring-up)."
-        )
-        assert not cpu_offloading, "cpu_offloading is not supported in the blockwise grouped FP8 path yet"
-        assert not save_original_input, (
-            "save_original_input is not supported in the blockwise grouped FP8 path yet"
-        )
-        assert wgrad_store is None or not wgrad_store.delay_wgrad_compute(), (
-            "delayed wgrad is not supported in the blockwise grouped FP8 path yet"
-        )
+        # User-reachable unsupported configs -> raise (survives python -O, unlike assert).
+        if use_bias:
+            raise NotImplementedError("bias is not supported in the blockwise grouped FP8 path yet")
+        if fuse_wgrad_accumulation:
+            raise NotImplementedError(
+                "fuse_wgrad_accumulation (gradient_accumulation_fusion) is not yet supported in "
+                "the ROCm blockwise grouped FP8 path. Pass --no-gradient-accumulation-fusion to the "
+                "training script: wgrad is then returned as a plain gradient and Megatron's DDP "
+                "post-hook accumulates it into the fp32 main_grad (numerically equivalent for bring-up)."
+            )
+        if cpu_offloading:
+            raise NotImplementedError("cpu_offloading is not supported in the blockwise grouped FP8 path yet")
+        if save_original_input:
+            raise NotImplementedError("save_original_input is not supported in the blockwise grouped FP8 path yet")
+        if wgrad_store is not None and wgrad_store.delay_wgrad_compute():
+            raise NotImplementedError("delayed wgrad is not supported in the blockwise grouped FP8 path yet")
 
         dt = _fp8_dtype(weight_quantizers)
         in_features = weights[0].size(-1)
