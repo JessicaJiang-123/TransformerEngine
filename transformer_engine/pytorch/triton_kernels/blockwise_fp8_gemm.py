@@ -132,13 +132,12 @@ def _get_blockwise_autotune_configs(
 #     TN     │ False          │ False          │ False      │ False    │ True
 #
 # Kept invariants (do not break without re-benchmarking):
-#   * `EVEN_K` fast path skips the K-tail mask on NT/NN (R26: removes two
+#   * `EVEN_K` fast path skips the K-tail mask on NT/NN (removes two
 #     `v_cmp_*` + one `v_cndmask_*` per K iteration). TN keeps the mask path
 #     because its `b_ptrs += BLOCK_K * stride_bk_val` arithmetic combined with
 #     `num_stages=3` triggered the historic Triton 3.7 LLVM-backend
 #     `Begin <= End` assertion; the TN autotune wrapper below already drops
-#     `ns=3`, but EVEN_K=False on TN is the matched safety net documented in
-#     `pr_report_blockwise_gemm_triton.md` §3.2.
+#     `ns=3`, but EVEN_K=False on TN is the matched safety net.
 #   * `TRANS_C_STORE=True` takes the `tl.trans(acc)` epilogue so the BF16
 #     write coalesces into `(buffer|global)_store_dwordx4` under
 #     `trans_c=True` (stride_cm=1, stride_cn=N). NT/NN (`trans_c=False`) keep
@@ -151,7 +150,7 @@ def _get_blockwise_autotune_configs(
 #   * NN  : 144 configs (96 + matrix_instr_nonkdim=16 stack on BM=256),
 #           key=("M","N","K","EVEN_K"), keeps `num_stages=3` (the nonkdim=16
 #           candidate is what avoids the 16-AGPR overflow on
-#           BM=256/nw=8/ns=3 documented in §3.3).
+#           BM=256/nw=8/ns=3).
 #   * TN  : 64 configs (no `num_stages=3` — dual strided-K + ns=3 hits the
 #           Triton 3.7 AMD-backend assertion mentioned above),
 #           key=("M","N","K").
@@ -393,7 +392,7 @@ def gemm_fp8_blockwise_triton_kernel(
     # for the kernel, which autotune wrapper owns the search space/cache, and
     # the three constexpr flags (SCALE_2D_B / EVEN_K / TRANS_C_STORE).
     #
-    # TN safety notes (Round-6 P2-#7.6):
+    # TN safety notes:
     #   * `TRANS_C_STORE=True` lets the BF16 epilogue coalesce into dwordx4
     #     under the `(N, M)` output buffer; without it the wgrad path emits
     #     64×buffer_store_short per tile.

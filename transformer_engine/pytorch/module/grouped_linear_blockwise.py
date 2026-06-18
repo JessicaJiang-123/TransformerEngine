@@ -28,7 +28,7 @@ class _GroupedLinearBlockwiseFP8(torch.autograd.Function):
     """Blockwise FP8 grouped GEMM (fwd/dgrad/wgrad) via ported Triton kernels.
 
     First-cut scope: no bias, no fuse_wgrad_accumulation, no cpu_offload, no
-    delay-wgrad, no save_original_input (each asserted, not silently ignored).
+    delay-wgrad, no save_original_input (each rejected, not silently ignored).
     """
 
     @staticmethod
@@ -70,9 +70,8 @@ class _GroupedLinearBlockwiseFP8(torch.autograd.Function):
         biases = weights_and_biases[num_gemms:]
 
         # First-cut: unsupported orchestration features -> loud error, not silent wrong.
-        # Internal invariant (dispatch guarantees fp8=True here) -> assert is fine.
+        # fp8 is an internal invariant (assert); the rest are user-reachable -> raise.
         assert fp8, "blockwise grouped FP8 path requires fp8=True"
-        # User-reachable unsupported configs -> raise (survives python -O, unlike assert).
         if use_bias:
             raise NotImplementedError("bias is not supported in the blockwise grouped FP8 path yet")
         if fuse_wgrad_accumulation:
@@ -162,7 +161,7 @@ class _GroupedLinearBlockwiseFP8(torch.autograd.Function):
             )  # [G, N, K]
             wgrad_list = [dW[g].contiguous() for g in range(ctx.num_gemms)]
 
-        grad_biases = [None] * ctx.num_gemms  # use_bias asserted False
+        grad_biases = [None] * ctx.num_gemms  # bias rejected in forward
 
         return (
             dgrad.view(ctx.inp_shape) if dgrad is not None else None,
