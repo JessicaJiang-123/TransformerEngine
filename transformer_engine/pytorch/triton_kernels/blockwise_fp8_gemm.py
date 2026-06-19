@@ -320,6 +320,28 @@ _blockwise_fp8_tn_kernel = triton.autotune(
 )(_blockwise_fp8_unified_kernel)
 
 
+_TRITON_AUTOTUNE = bool(int(os.environ.get("NVTE_FP8_BLOCK_SCALING_TRITON_AUTOTUNE", "0")))
+
+
+def get_blockwise_gemm_config(layout, tokens):
+    """Baked gfx950 tile config; ``tokens`` is M for NT/NN, K for TN.
+
+    Winners captured offline over the model dense GEMM shapes, replacing per-shape
+    autotune. Returns None off gfx950 so the caller falls back to autotune.
+    """
+    if not is_gfx950():
+        return None
+    if layout == "NT":
+        return dict(BLOCK_M=256, BLOCK_N=64, BLOCK_K=128, GROUP_M=4, CHUNK=32, NUM_XCDS=8, num_warps=8, num_stages=3)
+    if layout == "NN":
+        if tokens <= 1024:
+            return dict(BLOCK_M=256, BLOCK_N=64, BLOCK_K=128, GROUP_M=4, CHUNK=64, NUM_XCDS=8, num_warps=8, num_stages=3)
+        return dict(BLOCK_M=128, BLOCK_N=128, BLOCK_K=128, GROUP_M=8, CHUNK=64, NUM_XCDS=8, num_warps=4, num_stages=2)
+    if tokens <= 2048:
+        return dict(BLOCK_M=128, BLOCK_N=128, BLOCK_K=128, GROUP_M=4, CHUNK=64, NUM_XCDS=8, num_warps=4, num_stages=2)
+    return dict(BLOCK_M=256, BLOCK_N=128, BLOCK_K=128, GROUP_M=4, CHUNK=32, NUM_XCDS=8, num_warps=8, num_stages=2)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Unified Public API — Block-wise FP8 GEMM
 # Interface consistent with CK blockwise backend.
@@ -444,7 +466,7 @@ def gemm_fp8_blockwise_triton_kernel(
     num_k = (K + 127) // 128
     NUM_SMS = ((M + 127) // 128) * ((N + 127) // 128)
 
-    autotune_kernel[(NUM_SMS,)](
+    args = (
         A_view,
         B_view,
         out,
@@ -465,12 +487,32 @@ def gemm_fp8_blockwise_triton_kernel(
         stride_bs_1,
         NUM_SMS,
         num_k,
+    )
+    flags = dict(
         A_K_CONTIGUOUS=not trans_a,
         B_K_CONTIGUOUS=trans_b,
         SCALE_2D_B=SCALE_2D_B,
         EVEN_K=EVEN_K,
         TRANS_C_STORE=TRANS_C_STORE,
     )
+    # Default: baked gfx950 config. Opt in to autotune via NVTE_FP8_BLOCK_SCALING_TRITON_AUTOTUNE.
+    layout = "NT" if (not trans_a and trans_b) else ("NN" if not trans_a else "TN")
+    cfg = None if _TRITON_AUTOTUNE else get_blockwise_gemm_config(layout, M if layout != "TN" else K)
+    if cfg is None:
+        autotune_kernel[(NUM_SMS,)](*args, **flags)
+    else:
+        _blockwise_fp8_unified_kernel[(NUM_SMS,)](
+            *args,
+            BLOCK_M=cfg["BLOCK_M"],
+            BLOCK_N=cfg["BLOCK_N"],
+            BLOCK_K=cfg["BLOCK_K"],
+            GROUP_M=cfg["GROUP_M"],
+            NUM_XCDS=cfg["NUM_XCDS"],
+            CHUNK=cfg["CHUNK"],
+            num_warps=cfg["num_warps"],
+            num_stages=cfg["num_stages"],
+            **flags,
+        )
     return out
 
 
