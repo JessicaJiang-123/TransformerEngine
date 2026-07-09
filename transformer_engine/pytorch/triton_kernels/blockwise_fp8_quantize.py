@@ -19,6 +19,12 @@ __all__ = [
 
 
 @triton.jit
+def _floor_to_pow2(scale):
+    scale_bits = scale.to(tl.uint32, bitcast=True) & 0xFF800000
+    return scale_bits.to(tl.float32, bitcast=True)
+
+
+@triton.jit
 def compute_scale_and_quant(x_tile, x_tile_abs, axis, FP8_MAX):
     x_tile_max = tl.max(x_tile_abs, axis=axis, keep_dims=True)
     x_tile_max = tl.maximum(x_tile_max, 1e-4)
