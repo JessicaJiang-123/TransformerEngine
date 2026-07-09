@@ -25,10 +25,12 @@ def _floor_to_pow2(scale):
 
 
 @triton.jit
-def compute_scale_and_quant(x_tile, x_tile_abs, axis, FP8_MAX):
+def compute_scale_and_quant(x_tile, x_tile_abs, axis, FP8_MAX, ROUND_POW2: tl.constexpr):
     x_tile_max = tl.max(x_tile_abs, axis=axis, keep_dims=True)
     x_tile_max = tl.maximum(x_tile_max, 1e-4)
     x_scales_tile = FP8_MAX / x_tile_max
+    if ROUND_POW2:
+        x_scales_tile = _floor_to_pow2(x_scales_tile)
     x_fp8_tile = x_tile * x_scales_tile
     x_fp8_tile = tl.clamp(x_fp8_tile, min=-FP8_MAX, max=FP8_MAX)
     return x_fp8_tile, x_scales_tile
@@ -44,6 +46,7 @@ def quant_fp8_blockwise_kernel(
     BLOCK_SIZE: tl.constexpr,
     FP8_MAX: tl.constexpr,
     AXIS: tl.constexpr,
+    ROUND_POW2: tl.constexpr,
 ):
     pid_m = tl.program_id(axis=0)
     pid_n = tl.program_id(axis=1)
@@ -55,7 +58,7 @@ def quant_fp8_blockwise_kernel(
     x_tile = tl.load(x_ptrs, mask=mask, other=0.0).to(tl.float32)
     x_tile_abs = tl.abs(x_tile)
 
-    x_fp8_tile, x_scales_tile = compute_scale_and_quant(x_tile, x_tile_abs, AXIS, FP8_MAX)
+    x_fp8_tile, x_scales_tile = compute_scale_and_quant(x_tile, x_tile_abs, AXIS, FP8_MAX, ROUND_POW2)
 
     x_fp8_ptrs = x_fp8_ptr + offs_m[:, None] * N + offs_n[None, :]
     tl.store(x_fp8_ptrs, x_fp8_tile.to(x_fp8_ptr.dtype.element_ty), mask=mask)
@@ -81,6 +84,7 @@ def quant_fp8_blockwise_dual_kernel(
     N,
     BLOCK_SIZE: tl.constexpr,
     FP8_MAX: tl.constexpr,
+    ROUND_POW2: tl.constexpr,
 ):
     pid_m = tl.program_id(axis=0)
     pid_n = tl.program_id(axis=1)
@@ -92,8 +96,8 @@ def quant_fp8_blockwise_dual_kernel(
     x_tile = tl.load(x_ptrs, mask=mask, other=0.0).to(tl.float32)
     x_tile_abs = tl.abs(x_tile)
 
-    x_fp8_row_tile, x_scales_row_tile = compute_scale_and_quant(x_tile, x_tile_abs, 1, FP8_MAX)
-    x_fp8_col_tile, x_scales_col_tile = compute_scale_and_quant(x_tile, x_tile_abs, 0, FP8_MAX)
+    x_fp8_row_tile, x_scales_row_tile = compute_scale_and_quant(x_tile, x_tile_abs, 1, FP8_MAX, ROUND_POW2)
+    x_fp8_col_tile, x_scales_col_tile = compute_scale_and_quant(x_tile, x_tile_abs, 0, FP8_MAX, ROUND_POW2)
 
     x_fp8_row_ptrs = x_fp8_row_ptr + offs_m[:, None] * N + offs_n[None, :]
     tl.store(x_fp8_row_ptrs, x_fp8_row_tile.to(x_fp8_row_ptr.dtype.element_ty), mask=mask)
@@ -121,6 +125,7 @@ def quant_fp8_blockwise_for_weight_kernel(
     N,
     BLOCK_SIZE: tl.constexpr,
     FP8_MAX: tl.constexpr,
+    ROUND_POW2: tl.constexpr,
 ):
     bid = tl.program_id(axis=0)
     pid_m = tl.program_id(axis=1)
@@ -140,6 +145,8 @@ def quant_fp8_blockwise_for_weight_kernel(
     w_tile_max = tl.max(w_tile_abs)
     w_tile_max = tl.maximum(w_tile_max, 1e-4)
     w_scales = FP8_MAX / w_tile_max
+    if ROUND_POW2:
+        w_scales = _floor_to_pow2(w_scales)
     w_fp8_tile = w_tile * w_scales
     w_fp8_tile = tl.clamp(w_fp8_tile, min=-FP8_MAX, max=FP8_MAX)
 
@@ -161,6 +168,7 @@ def quant_fp8_blockwise_segment_m_kernel(
     num_groups,
     BLOCK_SIZE: tl.constexpr,
     FP8_MAX: tl.constexpr,
+    ROUND_POW2: tl.constexpr,
 ):
     """Colwise (axis=0) blockwise quantize with per-segment M padding.
 
@@ -202,7 +210,7 @@ def quant_fp8_blockwise_segment_m_kernel(
     x_tile = tl.load(x_ptrs, mask=mask, other=0.0).to(tl.float32)
     x_tile_abs = tl.abs(x_tile)
 
-    x_fp8_tile, x_scales_tile = compute_scale_and_quant(x_tile, x_tile_abs, 0, FP8_MAX)
+    x_fp8_tile, x_scales_tile = compute_scale_and_quant(x_tile, x_tile_abs, 0, FP8_MAX, ROUND_POW2)
 
     x_fp8_ptrs = x_fp8_ptr + offs_m_out[:, None] * N + offs_n[None, :]
     out_mask = (offs_m_out[:, None] < M_padded) & (offs_n[None, :] < N)
@@ -223,7 +231,7 @@ def quant_fp8_blockwise_segment_m_kernel(
 # -----------------------------------------------------------------------------
 
 
-def quantize_fp8_blockwise_dual(x: torch.Tensor, dtype: torch.dtype, block_size: int = 128):
+def quantize_fp8_blockwise_dual(x: torch.Tensor, dtype: torch.dtype, block_size: int = 128, pow2: bool = False):
     """Blockwise-quantize a 2D tensor in BOTH row (1xB) and column (Bx1) modes in one pass.
 
     Returns (x_fp8_row, x_scales_row, x_fp8_col, x_scales_col); scales hold the
@@ -242,11 +250,12 @@ def quantize_fp8_blockwise_dual(x: torch.Tensor, dtype: torch.dtype, block_size:
     quant_fp8_blockwise_dual_kernel[grid](
         x, x_fp8_row, x_scales_row, x_fp8_col, x_scales_col, M, N,
         BLOCK_SIZE=block_size, FP8_MAX=fp8_max,
+        ROUND_POW2=pow2,
     )
     return x_fp8_row, x_scales_row, x_fp8_col, x_scales_col
 
 
-def quantize_fp8_blockwise(x: torch.Tensor, dtype: torch.dtype, axis: int, block_size: int = 128):
+def quantize_fp8_blockwise(x: torch.Tensor, dtype: torch.dtype, axis: int, block_size: int = 128, pow2: bool = False):
     """Single-direction blockwise quantize. axis=1 -> rowwise (1xB), axis=0 -> colwise (Bx1)."""
     assert x.is_contiguous() and x.dim() == 2, "Input must be 2D and contiguous"
     M, N = x.shape
@@ -260,11 +269,12 @@ def quantize_fp8_blockwise(x: torch.Tensor, dtype: torch.dtype, axis: int, block
     grid = (triton.cdiv(M, block_size), triton.cdiv(N, block_size))
     quant_fp8_blockwise_kernel[grid](
         x, x_fp8, scales, M, N, BLOCK_SIZE=block_size, FP8_MAX=fp8_max, AXIS=axis,
+        ROUND_POW2=pow2,
     )
     return x_fp8, scales
 
 
-def quantize_fp8_blockwise_weight(w: torch.Tensor, dtype: torch.dtype, block_size: int = 128):
+def quantize_fp8_blockwise_weight(w: torch.Tensor, dtype: torch.dtype, block_size: int = 128, pow2: bool = False):
     """128x128 weight blockwise quantize. w is [B, M, N] (or [M, N], promoted to B=1)."""
     squeeze = False
     if w.dim() == 2:
@@ -282,13 +292,14 @@ def quantize_fp8_blockwise_weight(w: torch.Tensor, dtype: torch.dtype, block_siz
     grid = (B, triton.cdiv(M, block_size), triton.cdiv(N, block_size))
     quant_fp8_blockwise_for_weight_kernel[grid](
         w, w_fp8, w_scales, M, N, BLOCK_SIZE=block_size, FP8_MAX=fp8_max,
+        ROUND_POW2=pow2,
     )
     if squeeze:
         return w_fp8.squeeze(0), w_scales.squeeze(0)
     return w_fp8, w_scales
 
 
-def quantize_fp8_blockwise_segment_m(x, dtype, block_size, group_lens, group_offs):
+def quantize_fp8_blockwise_segment_m(x, dtype, block_size, group_lens, group_offs, pow2: bool = False):
     """Colwise blockwise quantize with per-segment (MoE group) M padding.
 
     Returns (x_fp8 [M_pad, N], x_scales, var_k_group_lens [B], var_k_group_offs [B+1]).
@@ -312,5 +323,6 @@ def quantize_fp8_blockwise_segment_m(x, dtype, block_size, group_lens, group_off
     quant_fp8_blockwise_segment_m_kernel[grid](
         x, x_fp8, x_scales, group_offs, var_k_group_offs, N, num_groups,
         BLOCK_SIZE=block_size, FP8_MAX=fp8_max,
+        ROUND_POW2=pow2,
     )
     return x_fp8, x_scales, var_k_group_lens, var_k_group_offs
