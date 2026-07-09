@@ -145,17 +145,17 @@ class Float8BlockQuantizer(Quantizer):
 
         if self.block_scaling_dim == 2:
             if self.rowwise_usage:
-                fp8, scale = quantize_fp8_blockwise_weight(x, dt, block)
+                fp8, scale = quantize_fp8_blockwise_weight(x, dt, block, pow2=self.force_pow_2_scales)
                 dst._rowwise_data = fp8.view(torch.uint8).reshape(orig_shape)
                 dst._rowwise_scale_inv = scale
             if self.columnwise_usage:
-                fp8c, scalec = quantize_fp8_blockwise_weight(x.t().contiguous(), dt, block)
+                fp8c, scalec = quantize_fp8_blockwise_weight(x.t().contiguous(), dt, block, pow2=self.force_pow_2_scales)
                 dst._columnwise_data = fp8c.view(torch.uint8)
                 dst._columnwise_scale_inv = scalec
         else:
             # 1x128 activation blocks; both directions come from the original src.
             if self.rowwise_usage and self.columnwise_usage:
-                row, srow, col, scol = quantize_fp8_blockwise_dual(x, dt, block)
+                row, srow, col, scol = quantize_fp8_blockwise_dual(x, dt, block, pow2=self.force_pow_2_scales)
                 dst._rowwise_data = row.view(torch.uint8).reshape(orig_shape)
                 dst._rowwise_scale_inv = srow.t().contiguous()
                 dst._columnwise_data = (
@@ -163,11 +163,11 @@ class Float8BlockQuantizer(Quantizer):
                 )
                 dst._columnwise_scale_inv = scol
             elif self.rowwise_usage:
-                row, srow = quantize_fp8_blockwise(x, dt, axis=1, block_size=block)
+                row, srow = quantize_fp8_blockwise(x, dt, axis=1, block_size=block, pow2=self.force_pow_2_scales)
                 dst._rowwise_data = row.view(torch.uint8).reshape(orig_shape)
                 dst._rowwise_scale_inv = srow.t().contiguous()
             else:
-                col, scol = quantize_fp8_blockwise(x, dt, axis=0, block_size=block)
+                col, scol = quantize_fp8_blockwise(x, dt, axis=0, block_size=block, pow2=self.force_pow_2_scales)
                 dst._columnwise_data = (
                     col.view(torch.uint8).t().contiguous().reshape((orig_shape[-1],) + orig_shape[:-1])
                 )
