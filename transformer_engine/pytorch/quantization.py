@@ -103,7 +103,10 @@ def check_nvfp4_support() -> Tuple[bool, str]:
 def check_fp8_block_scaling_support() -> Tuple[bool, str]:
     """Return if fp8 block scaling support is available"""
     if IS_HIP_EXTENSION:
-        return False, "FP8 block scaled gemm not yet supported for ROCm"
+        gpu_arch = get_device_compute_capability()
+        if gpu_arch == (9, 5):
+            return True, ""
+        return False, "Gfx95x is required for FP8 block scaling execution."
     if get_device_compute_capability() >= (9, 0) and float(torch.version.cuda) >= 12.9:
         return True, ""
     return (

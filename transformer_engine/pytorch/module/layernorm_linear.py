@@ -68,6 +68,7 @@ from ..quantized_tensor import (
 )
 from ...debug.pytorch.debug_state import TEDebugState
 from ..tensor.float8_tensor import Float8CurrentScalingQuantizer
+from ..tensor.float8_blockwise_tensor import Float8BlockQuantizer
 from ..tensor.mxfp8_tensor import MXFP8Quantizer
 from ..cpu_offload import (
     is_cpu_offload_enabled,
@@ -225,8 +226,10 @@ class _LayerNormLinear(torch.autograd.Function):
             and not custom  # TODO(negvet): and not FP8GlobalStateManager.get_fp8_recipe().custom()
         )
 
-        # ROCm does not currently support quantized norm for Float8CurrentScalingQuantizer
-        if IS_HIP_EXTENSION and isinstance(input_quantizer, Float8CurrentScalingQuantizer):
+        # ROCm does not currently support quantized norm for Float8CurrentScalingQuantizer or Float8BlockQuantizer
+        if IS_HIP_EXTENSION and isinstance(
+            input_quantizer, (Float8CurrentScalingQuantizer, Float8BlockQuantizer)
+        ):
             with_quantized_norm = False
 
         # Apply normalization

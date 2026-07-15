@@ -367,9 +367,15 @@ class Float8BlockScaling(Recipe):
     use_f32_scales: bool = os.getenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", "0") == "1"
 
     fp8_format: Format = Format.E4M3
-    fp8_quant_fwd_inp = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
-    fp8_quant_fwd_weight = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
-    fp8_quant_bwd_grad = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
+    if te_rocm_build:
+        # Activations always use fp32 scales since the aiter per-1x128 rollout kernel currently has no ue8m0 (pow2) path.
+        fp8_quant_fwd_inp = QParams(power_2_scale=False, amax_epsilon=0.0)
+        fp8_quant_fwd_weight = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
+        fp8_quant_bwd_grad = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
+    else:
+        fp8_quant_fwd_inp = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
+        fp8_quant_fwd_weight = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
+        fp8_quant_bwd_grad = QParams(power_2_scale=not use_f32_scales, amax_epsilon=0.0)
     x_block_scaling_dim: int = 1
     w_block_scaling_dim: int = 2
     grad_block_scaling_dim: int = 1
