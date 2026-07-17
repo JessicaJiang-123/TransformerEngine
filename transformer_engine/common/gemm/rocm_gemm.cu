@@ -1802,18 +1802,23 @@ void cublas_gemm(const Tensor *inputA, const Tensor *inputB, Tensor *outputD,
   if (use_hipkittens) {
     auto param = CanonicalizeGemmInput(*inputA, transa, *inputB, transb, m, n, k);
 
-    kittens_mxfp8_gemm(param.A, param.B, outputD->data.dptr,
-                       param.A_scale_inv, param.B_scale_inv,
-                       m, n, k, is_transa, is_transb,
-                       static_cast<int>(param.Atype),
-                       static_cast<int>(param.Btype),
-                       inputBias->data.dptr,
-                       static_cast<int>(inputBias->data.dtype),
-                       outputPreGelu->data.dptr,
-                       static_cast<int>(outputD->data.dtype),
-                       static_cast<int>(outputPreGelu->data.dtype),
-                       workspace, workspaceSize, gemm_stream);
-  } else {
+    use_hipkittens = kittens_mxfp8_gemm(param.A, param.B, outputD->data.dptr,
+                                        param.A_scale_inv, param.B_scale_inv,
+                                        m, n, k, is_transa, is_transb,
+                                        static_cast<int>(param.Atype),
+                                        static_cast<int>(param.Btype),
+                                        inputBias->data.dptr,
+                                        static_cast<int>(inputBias->data.dtype),
+                                        outputPreGelu->data.dptr,
+                                        static_cast<int>(outputD->data.dtype),
+                                        static_cast<int>(outputPreGelu->data.dtype),
+                                        workspace, workspaceSize, gemm_stream);
+  }
+  if (!use_hipkittens) {
+    if (is_mxfp8) {
+      NVTE_CHECK(inputBias->data.dptr == nullptr,
+                 "hipBLASLt MXFP8 GEMM does not support bias");
+    }
 #endif
     hipblaslt_gemm(inputA, inputB, outputD, inputBias, outputPreGelu, m, n, k, lda, ldb, ldd, transa,
                    transb, grad, workspace, workspaceSize, alpha, beta, use_split_accumulator,
