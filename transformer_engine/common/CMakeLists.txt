@@ -517,7 +517,11 @@ else() # USE_ROCM
     list(APPEND transformer_engine_LINKER_LIBS ck_fused_attn)
   endif()
   if(USE_HIPKITTENS_GEMM)
-    target_compile_definitions(transformer_engine PUBLIC USE_HIPKITTENS_GEMM)
+    # Only rocm_gemm.cu reads this macro, so scope it to that source rather than the whole
+    # target: a target-wide define changes every object's compile command and forces a full
+    # rebuild. Upstream defines it on the target -- restore that when merging upstream.
+    set_source_files_properties(gemm/rocm_gemm.cu
+                                PROPERTIES COMPILE_DEFINITIONS USE_HIPKITTENS_GEMM)
     list(APPEND transformer_engine_LINKER_LIBS kittens_gemm)
   endif()
   target_link_libraries(transformer_engine PUBLIC ${transformer_engine_LINKER_LIBS})
